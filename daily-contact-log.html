@@ -50,10 +50,11 @@ function blankForm(){return{drop_off_time:'',pick_up_time:'',pre_sleep_start:'',
 
 /* ---------- 啟動 ---------- */
 init();
+const SUPABASE_URL='https://flldiwpfuiwrlnsrqnoh.supabase.co';
+const SUPABASE_KEY='eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImZsbGRpd3BmdWl3cmxuc3Jxbm9oIiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTAxMzM1MjEsImV4cCI6MjEwNTcwOTUyMX0.xqxjNr94MZ5baILeLodEFXVnAwrvec-6RcPHCkQRNLA';
 function init(){
-  const saved=localStorage.getItem(CFG_KEY);
-  if(saved){const c=JSON.parse(saved);connect(c.url,c.key);}
-  else renderSetup();
+  localStorage.removeItem(CFG_KEY);
+  connect(SUPABASE_URL,SUPABASE_KEY);
 }
 function renderSetup(msg){
   document.getElementById('app').innerHTML=`
