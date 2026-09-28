@@ -1,0 +1,401 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>庭庭老師｜每日聯絡簿</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<style>
+  body{font-family:-apple-system,"PingFang TC","Microsoft JhengHei",sans-serif;background:#fdf6f0;color:#5b4636;}
+  .card{background:#fffaf5;border:2px dashed #e8c9a8;border-radius:18px;}
+  .pill{border:1px solid #cfe3d3;border-radius:999px;padding:4px 12px;font-size:13px;cursor:pointer;user-select:none;}
+  .pill.on{background:#a8d5ba;border-color:#7fb894;color:#2f4f3a;font-weight:600;}
+  .radio-pill{border:1px solid #f0c9a0;border-radius:999px;padding:4px 14px;font-size:13px;cursor:pointer;}
+  .radio-pill.on{background:#f6b87c;border-color:#e09a4f;color:#fff;font-weight:600;}
+  .sec-title{background:#a8d5ba;color:#2f4f3a;display:inline-block;padding:2px 12px;border-radius:8px;font-weight:600;font-size:14px;margin-bottom:8px;}
+  input,select,textarea{border:1px solid #e0c7ae;border-radius:8px;padding:6px 10px;background:#fff;}
+  input:disabled,select:disabled,textarea:disabled{background:#f4efe9;color:#8a7864;}
+  .btn{border-radius:10px;padding:8px 18px;font-weight:600;cursor:pointer;}
+  .btn-main{background:#f6b87c;color:#fff;}
+  .btn-main:hover{background:#e09a4f;}
+  .btn-ghost{background:#fff;border:1px solid #e0c7ae;}
+</style>
+</head>
+<body>
+<div id="app" class="max-w-5xl mx-auto p-4"></div>
+
+<script>
+/* ---------- 設定值 ---------- */
+const CFG_KEY='ttlog_supabase_cfg';
+const BM=['正常','糊便','硬便','稀便','紅屁股','已擦屁屁膏'];
+const HEALTH=['紅疹','口水疹','沒精神','咳嗽','發燒','嘔吐','鼻涕(透明)','鼻涕(黃綠)','鼻涕(血絲)'];
+const DEV=['生活自理','語言溝通','音樂律動','繪本閱讀','手指謠','藝術活動','戶外散步','教具操作','大肌肉','統感訓練','手作食物'];
+const BELONG=['尿布','衛生紙','口罩','濕紙巾','擦屁屁巾','沐浴乳','口水圍兜','奶嘴','奶粉','牙刷/漱口杯','姓名貼','吃飯圍兜','衣服','褲子','尿布墊'];
+const MEAL=['少','正常','多','拒吃'];
+const MEDTIME=['早前','早後','午前','午後','晚前','晚後'];
+
+let sb=null, session=null, profile=null, children=[];
+let curChild=null, curDate=new Date().toISOString().slice(0,10);
+let form=blankForm(), reportList=[], editingId=null;
+
+function blankForm(){return{drop_off_time:'',pick_up_time:'',pre_sleep_start:'',pre_sleep_end:'',
+  pre_bm:false,pre_breakfast:false,pre_medication:false,
+  sleep1_start:'',sleep1_end:'',sleep2_start:'',sleep2_end:'',sleep_quality:'',
+  bm:[],temp_morning:'',temp_noon:'',temp_afternoon:'',health:[],
+  breakfast_status:'',lunch_status:'',dinner_status:'',snack_status:'',
+  med_needed:false,med_reason:'',med_reason_other:'',med_powder_packs:'',med_powder_cold:false,
+  med_water_bottles:'',med_water_cc:'',med_water_cold:false,med_times:[],med_special:'',
+  med_given_sign:'',med_given_time:'',development:[],belongings:[],parent_note:'',caregiver_note:''};}
+
+/* ---------- 啟動 ---------- */
+init();
+function init(){
+  const saved=localStorage.getItem(CFG_KEY);
+  if(saved){const c=JSON.parse(saved);connect(c.url,c.key);}
+  else renderSetup();
+}
+function renderSetup(msg){
+  document.getElementById('app').innerHTML=`
+  <div class="max-w-md mx-auto mt-16 card p-6">
+    <div class="sec-title">初次設定</div>
+    <p class="text-sm mb-3">請輸入 Supabase 專案的 URL 與 anon key（只需設定一次，會存在本機瀏覽器）。</p>
+    <input id="su" placeholder="Supabase URL" class="w-full mb-2"><br>
+    <input id="sk" placeholder="Supabase anon key" class="w-full mb-3"><br>
+    ${msg?`<p class="text-red-500 text-sm mb-2">${msg}</p>`:''}
+    <button class="btn btn-main w-full" onclick="saveCfg()">連線</button>
+  </div>`;
+}
+function saveCfg(){
+  const url=document.getElementById('su').value.trim(), key=document.getElementById('sk').value.trim();
+  if(!url||!key)return;
+  localStorage.setItem(CFG_KEY,JSON.stringify({url,key}));
+  connect(url,key);
+}
+async function connect(url,key){
+  sb=supabase.createClient(url,key);
+  const {data}=await sb.auth.getSession();
+  session=data.session;
+  sb.auth.onAuthStateChange((_e,s)=>{session=s;});
+  if(session) await afterLogin(); else renderLogin();
+}
+function renderLogin(msg){
+  document.getElementById('app').innerHTML=`
+  <div class="max-w-md mx-auto mt-16 card p-6">
+    <div class="text-center text-2xl mb-4">🧸 庭庭老師｜每日聯絡簿</div>
+    <input id="em" placeholder="Email" class="w-full mb-2"><br>
+    <input id="pw" type="password" placeholder="密碼" class="w-full mb-3"><br>
+    ${msg?`<p class="text-red-500 text-sm mb-2">${msg}</p>`:''}
+    <button class="btn btn-main w-full" onclick="doLogin()">登入</button>
+    <p class="text-xs text-gray-400 mt-3">帳號由管理者建立，如需帳號請聯繫老師。</p>
+  </div>`;
+}
+async function doLogin(){
+  const email=document.getElementById('em').value.trim(), password=document.getElementById('pw').value;
+  const {data,error}=await sb.auth.signInWithPassword({email,password});
+  if(error)return renderLogin(error.message);
+  session=data.session; await afterLogin();
+}
+async function logout(){await sb.auth.signOut();session=null;profile=null;renderLogin();}
+
+async function afterLogin(){
+  const {data:p,error}=await sb.from('profiles').select('*').eq('id',session.user.id).single();
+  if(error||!p){renderLogin('此帳號尚未設定權限，請聯繫管理者。');return;}
+  profile=p;
+  const {data:ch}=await sb.from('children').select('*').order('name');
+  children=ch||[];
+  if(profile.role==='admin'){
+    curChild=children[0]?.id||null;
+    renderAdmin();
+  }else{
+    curChild=profile.child_id;
+    await loadReportList();
+    renderParent();
+  }
+}
+
+/* ---------- 共用：載入單筆/多筆報表 ---------- */
+async function loadReportList(){
+  if(!curChild){reportList=[];return;}
+  const {data}=await sb.from('reports').select('id,report_date').eq('child_id',curChild).order('report_date',{ascending:false}).limit(60);
+  reportList=data||[];
+}
+async function loadReportForDate(dateStr){
+  if(!curChild)return;
+  const {data}=await sb.from('reports').select('*').eq('child_id',curChild).eq('report_date',dateStr).maybeSingle();
+  if(data){editingId=data.id;form={...blankForm(),...data.data};}
+  else{editingId=null;form=blankForm();}
+}
+
+/* ============ 管理者畫面 ============ */
+async function renderAdmin(tab='report'){
+  if(!curChild) curChild=children[0]?.id||null;
+  await loadReportForDate(curDate);
+  const app=document.getElementById('app');
+  app.innerHTML=`
+  <div class="flex justify-between items-center mb-4">
+    <div class="text-xl font-bold">🧸 庭庭老師聯絡簿｜管理者</div>
+    <button class="btn btn-ghost" onclick="logout()">登出</button>
+  </div>
+  <div class="flex gap-2 mb-4">
+    <button class="pill ${tab==='report'?'on':''}" onclick="renderAdmin('report')">每日回報</button>
+    <button class="pill ${tab==='settings'?'on':''}" onclick="renderAdmin('settings')">設定 / 托育兒管理</button>
+  </div>
+  <div id="tabBody"></div>`;
+  if(tab==='report') renderAdminReportTab(); else renderSettingsTab();
+}
+
+function renderAdminReportTab(){
+  const box=document.getElementById('tabBody');
+  box.innerHTML=`
+  <div class="card p-4 mb-4 flex flex-wrap gap-3 items-center">
+    <label>托育兒：</label>
+    <select id="childSel" onchange="onChildChange(this.value)">
+      ${children.map(c=>`<option value="${c.id}" ${c.id===curChild?'selected':''}>${c.name}</option>`).join('')}
+    </select>
+    <label>日期：</label>
+    <input type="date" id="dateSel" value="${curDate}" onchange="onDateChange(this.value)">
+    <select onchange="jumpDate(this.value)" class="ml-auto">
+      <option value="">— 歷史紀錄 —</option>
+      ${reportList.map(r=>`<option value="${r.report_date}">${r.report_date}</option>`).join('')}
+    </select>
+  </div>
+  <div id="formArea"></div>`;
+  renderFormArea(false);
+}
+function onChildChange(v){curChild=v;renderAdminReportTab();}
+async function onDateChange(v){curDate=v;await loadReportForDate(curDate);renderAdminReportTab();}
+async function jumpDate(v){if(!v)return;curDate=v;await loadReportForDate(curDate);renderAdminReportTab();}
+
+function chk(group,val,readonly){
+  const on=form[group].includes(val);
+  return `<span class="pill ${on?'on':''}" ${readonly?'':`onclick="toggleChk('${group}','${val.replace(/'/g,"\\'")}')"`}>${val}</span>`;
+}
+function toggleChk(group,val){
+  const i=form[group].indexOf(val);
+  if(i>-1)form[group].splice(i,1); else form[group].push(val);
+  renderFormArea(false);
+}
+function radio(field,val,readonly){
+  const on=form[field]===val;
+  return `<span class="radio-pill ${on?'on':''}" ${readonly?'':`onclick="setField('${field}','${val}')"`}>${val}</span>`;
+}
+function setField(f,v){form[f]=v;renderFormArea(false);}
+function setInput(f,v){form[f]=v;}
+function setBool(f,v){form[f]=v;renderFormArea(false);}
+function fixTime(f,v){
+  v=v.trim();
+  if(v && !/^([01]?[0-9]|2[0-3]):[0-5][0-9]$/.test(v)){alert('時間請輸入24小時制格式，例如 14:30');return;}
+  form[f]=v;
+}
+function timeInput(field,readonly){
+  return `<input type="text" placeholder="HH:MM" maxlength="5" class="w-20 text-center"
+    value="${form[field]||''}" ${readonly?'disabled':`onchange="fixTime('${field}',this.value)"`}>`;
+}
+
+function renderFormArea(readonly){
+  const box=document.getElementById('formArea');
+  const c=children.find(x=>x.id===curChild);
+  box.innerHTML=`
+  <div class="grid md:grid-cols-2 gap-4">
+
+  <div class="card p-4">
+    <div class="sec-title">送托資訊</div>
+    <div class="flex gap-6 flex-wrap items-center">
+      <label class="flex items-center gap-2">送托時間 ${timeInput('drop_off_time',readonly)}</label>
+      <label class="flex items-center gap-2">接送時間 ${timeInput('pick_up_time',readonly)}</label>
+    </div>
+  </div>
+
+  <div class="card p-4">
+    <div class="sec-title">托育前（家長填寫）</div>
+    <div class="flex gap-2 items-center mb-3">
+      <span>睡眠</span> ${timeInput('pre_sleep_start',readonly)} <span>~</span> ${timeInput('pre_sleep_end',readonly)}
+    </div>
+    <div class="flex gap-4 flex-wrap">
+      <label><input type="checkbox" ${form.pre_bm?'checked':''} ${readonly?'disabled':`onchange="setBool('pre_bm',this.checked)"`}> 已排便</label>
+      <label><input type="checkbox" ${form.pre_breakfast?'checked':''} ${readonly?'disabled':`onchange="setBool('pre_breakfast',this.checked)"`}> 已吃早餐</label>
+      <label><input type="checkbox" ${form.pre_medication?'checked':''} ${readonly?'disabled':`onchange="setBool('pre_medication',this.checked)"`}> 已吃藥</label>
+    </div>
+  </div>
+
+  <div class="card p-4">
+    <div class="sec-title">睡眠狀況</div>
+    <div class="flex flex-col gap-2 mb-3">
+      <div class="flex gap-2 items-center">第一段 ${timeInput('sleep1_start',readonly)} <span>~</span> ${timeInput('sleep1_end',readonly)}</div>
+      <div class="flex gap-2 items-center">第二段 ${timeInput('sleep2_start',readonly)} <span>~</span> ${timeInput('sleep2_end',readonly)}</div>
+    </div>
+    <div class="flex gap-2">${['良好','普通','不安穩'].map(v=>radio('sleep_quality',v,readonly)).join('')}</div>
+  </div>
+
+  <div class="card p-4">
+    <div class="sec-title">排便狀況</div>
+    <div class="flex gap-2 flex-wrap">${BM.map(v=>chk('bm',v,readonly)).join('')}</div>
+  </div>
+
+  <div class="card p-4">
+    <div class="sec-title">體溫測量 (°C)</div>
+    <div class="flex gap-6 flex-wrap">
+      <label class="flex items-center gap-2">早上 <input class="w-16" value="${form.temp_morning||''}" ${readonly?'disabled':`onchange="setInput('temp_morning',this.value)"`}></label>
+      <label class="flex items-center gap-2">中午 <input class="w-16" value="${form.temp_noon||''}" ${readonly?'disabled':`onchange="setInput('temp_noon',this.value)"`}></label>
+      <label class="flex items-center gap-2">下午 <input class="w-16" value="${form.temp_afternoon||''}" ${readonly?'disabled':`onchange="setInput('temp_afternoon',this.value)"`}></label>
+    </div>
+  </div>
+
+  <div class="card p-4">
+    <div class="sec-title">健康狀況</div>
+    <div class="flex gap-2 flex-wrap">${HEALTH.map(v=>chk('health',v,readonly)).join('')}</div>
+  </div>
+
+  <div class="card p-4 md:col-span-2">
+    <div class="sec-title">飲食狀況（三餐）</div>
+    <div class="grid sm:grid-cols-2 lg:grid-cols-4 gap-4">
+      <div><div class="mb-1 font-medium">早餐</div><div class="flex gap-2 flex-wrap">${MEAL.map(v=>radio('breakfast_status',v,readonly)).join('')}</div></div>
+      <div><div class="mb-1 font-medium">午餐</div><div class="flex gap-2 flex-wrap">${MEAL.map(v=>radio('lunch_status',v,readonly)).join('')}</div></div>
+      <div><div class="mb-1 font-medium">晚餐</div><div class="flex gap-2 flex-wrap">${MEAL.map(v=>radio('dinner_status',v,readonly)).join('')}</div></div>
+      <div><div class="mb-1 font-medium">點心</div><div class="flex gap-2 flex-wrap">${MEAL.map(v=>radio('snack_status',v,readonly)).join('')}</div></div>
+    </div>
+  </div>
+
+  <div class="card p-4 md:col-span-2">
+    <div class="sec-title">用藥需求（家長委託）</div>
+    <label class="mb-3 block"><input type="checkbox" ${form.med_needed?'checked':''} ${readonly?'disabled':`onchange="setBool('med_needed',this.checked)"`}> 今日需服藥</label>
+    <div class="grid sm:grid-cols-2 gap-4 mb-3">
+      <div class="flex items-center gap-3 flex-wrap">
+        <span>原因：</span>${radio('med_reason','感冒',readonly)}${radio('med_reason','其他',readonly)}
+        <input placeholder="其他原因" value="${form.med_reason_other||''}" ${readonly?'disabled':`onchange="setInput('med_reason_other',this.value)"`}>
+      </div>
+      <div class="flex items-center gap-3 flex-wrap">
+        <span>藥粉</span><input class="w-14" value="${form.med_powder_packs||''}" ${readonly?'disabled':`onchange="setInput('med_powder_packs',this.value)"`}><span>包</span>
+        <label class="flex items-center gap-1"><input type="checkbox" ${form.med_powder_cold?'checked':''} ${readonly?'disabled':`onchange="setBool('med_powder_cold',this.checked)"`}>冷藏</label>
+      </div>
+      <div class="flex items-center gap-3 flex-wrap">
+        <span>藥水</span><input class="w-14" value="${form.med_water_bottles||''}" ${readonly?'disabled':`onchange="setInput('med_water_bottles',this.value)"`}><span>瓶</span>
+        <input class="w-16" value="${form.med_water_cc||''}" ${readonly?'disabled':`onchange="setInput('med_water_cc',this.value)"`}><span>c.c.</span>
+        <label class="flex items-center gap-1"><input type="checkbox" ${form.med_water_cold?'checked':''} ${readonly?'disabled':`onchange="setBool('med_water_cold',this.checked)"`}>冷藏</label>
+      </div>
+      <div class="flex items-center gap-3 flex-wrap">
+        <span>托育員簽名</span><input value="${form.med_given_sign||''}" ${readonly?'disabled':`onchange="setInput('med_given_sign',this.value)"`}>
+        <span>時間</span>${timeInput('med_given_time',readonly)}
+      </div>
+    </div>
+    <div class="mb-3">用藥時間：<div class="flex gap-2 flex-wrap inline-flex">${MEDTIME.map(v=>chk('med_times',v,readonly)).join('')}</div></div>
+    <input class="w-full" placeholder="特殊用藥說明" value="${form.med_special||''}" ${readonly?'disabled':`onchange="setInput('med_special',this.value)"`}>
+  </div>
+
+  <div class="card p-4">
+    <div class="sec-title">適性發展</div>
+    <div class="flex gap-2 flex-wrap">${DEV.map(v=>chk('development',v,readonly)).join('')}</div>
+  </div>
+
+  <div class="card p-4">
+    <div class="sec-title">攜帶物品</div>
+    <div class="flex gap-2 flex-wrap">${BELONG.map(v=>chk('belongings',v,readonly)).join('')}</div>
+  </div>
+
+  <div class="card p-4 md:col-span-2">
+    <div class="sec-title">分享區</div>
+    <div class="grid sm:grid-cols-2 gap-3">
+      <textarea class="w-full" rows="3" placeholder="家長分享區" ${readonly?'disabled':`onchange="setInput('parent_note',this.value)"`}>${form.parent_note||''}</textarea>
+      <textarea class="w-full" rows="3" placeholder="托育員分享區" ${readonly?'disabled':`onchange="setInput('caregiver_note',this.value)"`}>${form.caregiver_note||''}</textarea>
+    </div>
+  </div>
+
+  </div>
+  ${readonly?'':'<button class="btn btn-main mt-4" onclick="saveReport()">儲存本日紀錄</button>'}
+  `;
+}
+async function saveReport(){
+  if(!curChild)return alert('請先新增托育兒');
+  const payload={child_id:curChild,report_date:curDate,data:form,updated_at:new Date().toISOString()};
+  let res;
+  if(editingId) res=await sb.from('reports').update(payload).eq('id',editingId);
+  else res=await sb.from('reports').upsert(payload,{onConflict:'child_id,report_date'});
+  if(res.error) return alert('儲存失敗：'+res.error.message);
+  await loadReportList();
+  alert('已儲存');
+  renderAdminReportTab();
+}
+
+/* ---------- 設定 / 托育兒管理 ---------- */
+function renderSettingsTab(){
+  const box=document.getElementById('tabBody');
+  box.innerHTML=`
+  <div class="card p-4 mb-4">
+    <div class="sec-title">托育兒名單</div>
+    <div class="flex flex-col gap-2 mb-3">
+      ${children.map(c=>`<div class="flex items-center gap-2">
+        <span class="flex-1">${c.name}</span>
+        <button class="btn btn-ghost text-sm" onclick="deleteChild('${c.id}')">刪除</button>
+      </div>`).join('')||'<p class="text-sm text-gray-400">尚未新增托育兒</p>'}
+    </div>
+    <div class="flex gap-2">
+      <input id="newChildName" placeholder="新托育兒姓名" class="flex-1">
+      <button class="btn btn-main" onclick="addChild()">新增</button>
+    </div>
+  </div>
+  <div class="card p-4 mb-4">
+    <div class="sec-title">家長帳號設定說明</div>
+    <p class="text-sm leading-relaxed">Supabase 不支援在網頁前端直接建立登入帳號，請依下列步驟操作：<br>
+    1. 到 Supabase 後台「Authentication」新增家長 Email／密碼帳號。<br>
+    2. 到「Table Editor → profiles」新增一列：id 填該帳號的 user id，role 填 parent，child_id 填對應的托育兒 id。<br>
+    管理者帳號則將 role 填為 admin（child_id 留空）。</p>
+  </div>
+  <div class="card p-4">
+    <div class="sec-title">資料庫初始化 SQL（僅需執行一次）</div>
+    <textarea class="w-full text-xs" rows="10" readonly onclick="this.select()">create table children(id uuid default gen_random_uuid() primary key, name text not null, created_at timestamptz default now());
+create table profiles(id uuid references auth.users primary key, role text not null check (role in ('admin','parent')), child_id uuid references children(id), display_name text);
+create table reports(id uuid default gen_random_uuid() primary key, child_id uuid references children(id) not null, report_date date not null, data jsonb not null default '{}', created_at timestamptz default now(), updated_at timestamptz default now(), unique(child_id, report_date));
+alter table children enable row level security;
+alter table profiles enable row level security;
+alter table reports enable row level security;
+create policy children_select on children for select using (true);
+create policy children_admin_all on children for all using (exists(select 1 from profiles p where p.id=auth.uid() and p.role='admin'));
+create policy profiles_self on profiles for select using (id=auth.uid());
+create policy profiles_admin on profiles for select using (exists(select 1 from profiles p where p.id=auth.uid() and p.role='admin'));
+create policy reports_admin_all on reports for all using (exists(select 1 from profiles p where p.id=auth.uid() and p.role='admin'));
+create policy reports_parent_select on reports for select using (exists(select 1 from profiles p where p.id=auth.uid() and p.role='parent' and p.child_id=reports.child_id));</textarea>
+  </div>`;
+}
+async function addChild(){
+  const name=document.getElementById('newChildName').value.trim();
+  if(!name)return;
+  const {error}=await sb.from('children').insert({name});
+  if(error)return alert('新增失敗：'+error.message);
+  const {data:ch}=await sb.from('children').select('*').order('name');
+  children=ch||[];
+  if(!curChild) curChild=children[0]?.id||null;
+  renderSettingsTab();
+}
+async function deleteChild(id){
+  if(!confirm('確定要刪除此托育兒？相關聯絡簿紀錄也會一併刪除。'))return;
+  await sb.from('reports').delete().eq('child_id',id);
+  await sb.from('children').delete().eq('id',id);
+  const {data:ch}=await sb.from('children').select('*').order('name');
+  children=ch||[];
+  if(curChild===id)curChild=children[0]?.id||null;
+  renderSettingsTab();
+}
+
+/* ============ 家長畫面（唯讀） ============ */
+async function renderParent(){
+  const c=children.find(x=>x.id===curChild);
+  await loadReportForDate(curDate);
+  document.getElementById('app').innerHTML=`
+  <div class="flex justify-between items-center mb-4">
+    <div class="text-xl font-bold">🧸 ${c?c.name:''} 的每日聯絡簿</div>
+    <button class="btn btn-ghost" onclick="logout()">登出</button>
+  </div>
+  <div class="card p-4 mb-4 flex gap-3 items-center flex-wrap">
+    <label>查看日期：</label>
+    <select onchange="jumpDateParent(this.value)">
+      ${reportList.length?reportList.map(r=>`<option value="${r.report_date}" ${r.report_date===curDate?'selected':''}>${r.report_date}</option>`).join(''):'<option>尚無紀錄</option>'}
+    </select>
+  </div>
+  <div id="formArea"></div>`;
+  renderFormArea(true);
+}
+async function jumpDateParent(v){curDate=v;await loadReportForDate(v);renderFormArea(true);}
+</script>
+</body>
+</html>
